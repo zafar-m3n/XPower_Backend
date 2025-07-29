@@ -32,12 +32,12 @@ app.use("/uploads", express.static("uploads"));
 // ✅ Routes
 const authRoutes = require("./routes/authRoutes");
 const productRoutes = require("./routes/productRoutes");
-// const reportRoutes = require("./routes/reportRoutes");
+const reportRoutes = require("./routes/reportRoutes");
 
 // ✅ Use Routes
 app.use("/api/v1/auth", authRoutes);
 app.use("/api/v1/products", productRoutes);
-// app.use("/api/v1/reports", reportRoutes);
+app.use("/api/v1/reports", reportRoutes);
 
 // ✅ Root Route
 app.get("/", (req, res) => {
