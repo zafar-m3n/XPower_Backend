@@ -1,0 +1,190 @@
+const { Product, Category, Stock, Warehouse } = require("../models");
+const { resSuccess, resError } = require("../utils/responseUtil");
+const xlsx = require("xlsx");
+const path = require("path");
+const fs = require("fs");
+
+// ===========================
+// GET ALL PRODUCTS
+// ===========================
+const getAllProducts = async (req, res) => {
+  try {
+    const products = await Product.findAll({
+      include: [
+        { model: Category, attributes: ["id", "name"] },
+        {
+          model: Stock,
+          attributes: ["quantity"],
+        },
+      ],
+    });
+
+    const productsWithTotalStock = products.map((product) => {
+      const totalStock = product.Stocks.reduce((acc, stock) => acc + stock.quantity, 0);
+      return {
+        id: product.id,
+        name: product.name,
+        code: product.code,
+        brand: product.brand,
+        cost: product.cost,
+        category: product.Category,
+        total_stock: totalStock,
+      };
+    });
+
+    return resSuccess(res, { products: productsWithTotalStock });
+  } catch (err) {
+    console.error(err);
+    return resError(res, "Failed to fetch products");
+  }
+};
+
+// ===========================
+// GET PRODUCT DETAILS
+// ===========================
+const getProductDetails = async (req, res) => {
+  try {
+    const product = await Product.findByPk(req.params.id, {
+      include: [
+        { model: Category, attributes: ["id", "name"] },
+        {
+          model: Stock,
+          include: [{ model: Warehouse, attributes: ["id", "name", "location"] }],
+        },
+      ],
+    });
+
+    if (!product) {
+      return resError(res, "Product not found", 404);
+    }
+
+    const stockByWarehouse = product.Stocks.map((s) => ({
+      warehouse: s.Warehouse.name,
+      quantity: s.quantity,
+    }));
+
+    return resSuccess(res, {
+      product: {
+        id: product.id,
+        name: product.name,
+        code: product.code,
+        brand: product.brand,
+        cost: product.cost,
+        description: product.description,
+        category: product.Category,
+        stock_by_warehouse: stockByWarehouse,
+      },
+    });
+  } catch (err) {
+    console.error(err);
+    return resError(res, "Failed to fetch product details");
+  }
+};
+
+// ===========================
+// SEARCH PRODUCTS (TYPEAHEAD)
+// ===========================
+const searchProducts = async (req, res) => {
+  try {
+    const query = req.query.query || "";
+
+    const products = await Product.findAll({
+      where: {
+        [require("sequelize").Op.or]: [
+          { name: { [require("sequelize").Op.like]: `%${query}%` } },
+          { code: { [require("sequelize").Op.like]: `%${query}%` } },
+        ],
+      },
+      limit: 10,
+      attributes: ["id", "name", "code"],
+    });
+
+    return resSuccess(res, { results: products });
+  } catch (err) {
+    console.error(err);
+    return resError(res, "Search failed");
+  }
+};
+
+// ===========================
+// ADD PRODUCT VIA FORM
+// ===========================
+const addProductForm = async (req, res) => {
+  try {
+    const { name, code, brand, description, cost, category_id } = req.body;
+
+    const existing = await Product.findOne({ where: { code } });
+    if (existing) {
+      return resError(res, "Product code already exists", 400);
+    }
+
+    const product = await Product.create({
+      name,
+      code,
+      brand,
+      description,
+      cost,
+      category_id,
+    });
+
+    return resSuccess(
+      res,
+      {
+        message: "Product created successfully",
+        product,
+      },
+      201
+    );
+  } catch (err) {
+    console.error(err);
+    return resError(res, "Failed to add product");
+  }
+};
+
+// ===========================
+// UPLOAD PRODUCTS VIA EXCEL
+// ===========================
+const uploadExcelProducts = async (req, res) => {
+  try {
+    if (!req.file) {
+      return resError(res, "No Excel file uploaded", 400);
+    }
+
+    const filePath = path.join(__dirname, "..", req.file.path);
+    const workbook = xlsx.readFile(filePath);
+    const sheet = workbook.Sheets[workbook.SheetNames[0]];
+    const rows = xlsx.utils.sheet_to_json(sheet);
+
+    for (const row of rows) {
+      const { name, code, brand, description, cost, category_id } = row;
+
+      const exists = await Product.findOne({ where: { code } });
+      if (!exists) {
+        await Product.create({
+          name,
+          code,
+          brand,
+          description,
+          cost,
+          category_id,
+        });
+      }
+    }
+
+    // Clean up uploaded file
+    fs.unlinkSync(filePath);
+
+    return resSuccess(res, { message: "Excel upload complete" });
+  } catch (err) {
+    console.error(err);
+    return resError(res, "Failed to upload Excel");
+  }
+};
+
+module.exports = {
+  getAllProducts,
+  getProductDetails,
+  searchProducts,
+  addProductForm,
+  uploadExcelProducts,
+};
