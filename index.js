@@ -31,13 +31,13 @@ app.use("/uploads", express.static("uploads"));
 
 // ✅ Routes
 const authRoutes = require("./routes/auth");
-const productRoutes = require("./routes/products");
-const reportRoutes = require("./routes/reports");
+// const productRoutes = require("./routes/products");
+// const reportRoutes = require("./routes/reports");
 
 // ✅ Use Routes
 app.use("/api/v1/auth", authRoutes);
-app.use("/api/v1/products", productRoutes);
-app.use("/api/v1/reports", reportRoutes);
+// app.use("/api/v1/products", productRoutes);
+// app.use("/api/v1/reports", reportRoutes);
 
 // ✅ Root Route
 app.get("/", (req, res) => {
