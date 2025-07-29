@@ -30,7 +30,7 @@ app.use(
 app.use("/uploads", express.static("uploads"));
 
 // ✅ Routes
-const authRoutes = require("./routes/auth");
+const authRoutes = require("./routes/authRoutes");
 // const productRoutes = require("./routes/products");
 // const reportRoutes = require("./routes/reports");
 
