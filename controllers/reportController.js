@@ -2,6 +2,10 @@ const { Product, Stock, Category, Warehouse } = require("../models");
 const { resSuccess, resError } = require("../utils/responseUtil");
 const { Op, fn, col, literal } = require("sequelize");
 
+const path = require("path");
+const ejs = require("ejs");
+const puppeteer = require("puppeteer");
+
 // ===========================
 // DASHBOARD STATS
 // ===========================
@@ -76,7 +80,7 @@ const lowStockReport = async (req, res) => {
 };
 
 // ===========================
-// STOCK BY WAREHOUSE
+// STOCK BY WAREHOUSE REPORT
 // ===========================
 const stockByWarehouseReport = async (req, res) => {
   try {
@@ -102,53 +106,6 @@ const stockByWarehouseReport = async (req, res) => {
   } catch (err) {
     console.error(err);
     return resError(res, "Failed to generate stock by warehouse report");
-  }
-};
-
-// ===========================
-// STOCK BY CATEGORY
-// ===========================
-const stockByCategoryReport = async (req, res) => {
-  try {
-    const results = await Stock.findAll({
-      attributes: [
-        [fn("SUM", col("quantity")), "total_quantity"],
-        [fn("SUM", literal("quantity * Product.cost")), "total_value"],
-      ],
-      include: [
-        {
-          model: Product,
-          attributes: ["id", "name", "cost", "category_id"],
-          include: [{ model: Category, attributes: ["id", "name"] }],
-        },
-      ],
-    });
-
-    const grouped = {};
-
-    for (const entry of results) {
-      const cat = entry.Product.Category;
-      if (!cat) continue;
-
-      if (!grouped[cat.id]) {
-        grouped[cat.id] = {
-          category_id: cat.id,
-          category_name: cat.name,
-          total_quantity: 0,
-          total_value: 0,
-        };
-      }
-
-      grouped[cat.id].total_quantity += entry.quantity;
-      grouped[cat.id].total_value += parseFloat(entry.quantity * entry.Product.cost);
-    }
-
-    const summary = Object.values(grouped);
-
-    return resSuccess(res, { stock_by_category: summary });
-  } catch (err) {
-    console.error(err);
-    return resError(res, "Failed to generate stock by category report");
   }
 };
 
@@ -183,10 +140,94 @@ const outOfStockReport = async (req, res) => {
   }
 };
 
+// ===========================
+// PDF GENERATION (Puppeteer)
+// ===========================
+const generateReportPDF = async (req, res) => {
+  const { type } = req.params;
+
+  const config = {
+    "low-stock": {
+      title: "Low Stock Report",
+      fetcher: lowStockReport,
+      key: "low_stock",
+      columns: [
+        { key: "name", label: "Product Name" },
+        { key: "code", label: "Code" },
+        { key: "brand", label: "Brand" },
+        { key: "cost", label: "Cost" },
+        { key: "total_quantity", label: "Qty" },
+      ],
+    },
+    "out-of-stock": {
+      title: "Out of Stock Report",
+      fetcher: outOfStockReport,
+      key: "out_of_stock",
+      columns: [
+        { key: "name", label: "Product Name" },
+        { key: "code", label: "Code" },
+        { key: "brand", label: "Brand" },
+        { key: "cost", label: "Cost" },
+      ],
+    },
+    "stock-by-warehouse": {
+      title: "Stock by Warehouse",
+      fetcher: stockByWarehouseReport,
+      key: "stock_by_warehouse",
+      columns: [
+        { key: "warehouse_name", label: "Warehouse" },
+        { key: "location", label: "Location" },
+        { key: "total_quantity", label: "Total Qty" },
+      ],
+    },
+  };
+
+  const report = config[type];
+  if (!report) return res.status(400).json({ error: "Invalid report type." });
+
+  try {
+    const mockReq = { ...req };
+    const mockRes = {
+      status: () => mockRes,
+      json: (data) => data,
+    };
+    const rawResult = await report.fetcher(mockReq, mockRes);
+    const rows = rawResult?.data?.[report.key] || [];
+
+    const html = await ejs.renderFile(path.join(__dirname, "..", "views", "report-pdf.ejs"), {
+      title: report.title,
+      columns: report.columns,
+      rows,
+    });
+
+    const browser = await puppeteer.launch({ headless: "new" });
+    const page = await browser.newPage();
+    await page.setContent(html, { waitUntil: "networkidle0" });
+
+    const buffer = await page.pdf({
+      format: "A4",
+      printBackground: true,
+      margin: { top: "30px", bottom: "30px", left: "30px", right: "30px" },
+    });
+
+    await browser.close();
+
+    res.set({
+      "Content-Type": "application/pdf",
+      "Content-Disposition": `attachment; filename="${report.title}.pdf"`,
+    });
+
+    res.send(buffer);
+  } catch (err) {
+    console.error("PDF generation failed:", err);
+    res.status(500).json({ error: "Failed to generate PDF." });
+  }
+};
+
 module.exports = {
   dashboardStats,
   lowStockReport,
   stockByWarehouseReport,
-  stockByCategoryReport,
   outOfStockReport,
+  generateReportPDF,
 };
