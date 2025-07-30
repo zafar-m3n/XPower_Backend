@@ -22,14 +22,15 @@ const getAllProducts = async (req, res) => {
         }
       : {};
 
-    const { count, rows } = await Product.findAndCountAll({
+    // Fix: use count() separately without join
+    const total = await Product.count({ where: whereClause });
+
+    // Then fetch paginated product data with joins
+    const rows = await Product.findAll({
       where: whereClause,
       include: [
         { model: Category, attributes: ["id", "name"] },
-        {
-          model: Stock,
-          attributes: ["quantity"],
-        },
+        { model: Stock, attributes: ["quantity"] },
       ],
       offset,
       limit,
@@ -51,10 +52,10 @@ const getAllProducts = async (req, res) => {
     return resSuccess(res, {
       products: productsWithTotalStock,
       pagination: {
-        total: count,
+        total,
         page,
         limit,
-        totalPages: Math.ceil(count / limit),
+        totalPages: Math.ceil(total / limit),
       },
     });
   } catch (err) {
