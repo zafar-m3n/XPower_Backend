@@ -120,11 +120,13 @@ const uploadExcelProducts = async (req, res) => {
     const rows = xlsx.utils.sheet_to_json(sheet);
 
     for (const row of rows) {
-      const { name, code, brand, description, cost, category_id } = row;
+      const { name, code, brand, description, cost, category_id, warehouse_id, quantity } = row;
 
-      const exists = await Product.findOne({ where: { code } });
-      if (!exists) {
-        await Product.create({
+      // Step 1: Create/find the product
+      let product = await Product.findOne({ where: { code } });
+
+      if (!product) {
+        product = await Product.create({
           name,
           code,
           brand,
@@ -133,11 +135,31 @@ const uploadExcelProducts = async (req, res) => {
           category_id,
         });
       }
+
+      // Step 2: If warehouse_id & quantity are given, create stock row
+      if (warehouse_id && quantity !== undefined) {
+        const existingStock = await Stock.findOne({
+          where: {
+            product_id: product.id,
+            warehouse_id: warehouse_id,
+          },
+        });
+
+        if (!existingStock) {
+          await Stock.create({
+            product_id: product.id,
+            warehouse_id,
+            quantity,
+          });
+        } else {
+          // Optional: update quantity if needed
+          existingStock.quantity += Number(quantity);
+          await existingStock.save();
+        }
+      }
     }
 
-    // Clean up uploaded file
     fs.unlinkSync(filePath);
-
     return resSuccess(res, { message: "Excel upload complete" });
   } catch (err) {
     console.error(err);
