@@ -19,10 +19,6 @@ const upload = getMulterUpload("uploads/products");
 // @desc    Get all products
 router.get("/", authenticate, getAllProducts);
 
-// @route   GET /api/v1/products/search?query=...
-// @desc    Typeahead product search by name/code
-router.get("/search", authenticate, searchProducts);
-
 // @route   GET /api/v1/products/:id
 // @desc    Get product details by ID
 router.get("/:id", authenticate, getProductDetails);

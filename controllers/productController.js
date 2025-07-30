@@ -1,3 +1,4 @@
+const { Op } = require("sequelize");
 const { Product, Category, Stock, Warehouse } = require("../models");
 const { resSuccess, resError } = require("../utils/responseUtil");
 const xlsx = require("xlsx");
@@ -7,17 +8,22 @@ const fs = require("fs");
 // ===========================
 // GET ALL PRODUCTS
 // ===========================
+
 const getAllProducts = async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
     const offset = (page - 1) * limit;
+    const search = req.query.search?.trim();
 
-    // 1. Get correct product count WITHOUT joins
-    const total = await Product.count();
+    const whereClause = search
+      ? {
+          [Op.or]: [{ name: { [Op.like]: `%${search}%` } }, { code: { [Op.like]: `%${search}%` } }],
+        }
+      : {};
 
-    // 2. Then fetch products with joins and pagination
-    const products = await Product.findAll({
+    const { count, rows } = await Product.findAndCountAll({
+      where: whereClause,
       include: [
         { model: Category, attributes: ["id", "name"] },
         {
@@ -29,8 +35,7 @@ const getAllProducts = async (req, res) => {
       limit,
     });
 
-    // 3. Map results
-    const productsWithTotalStock = products.map((product) => {
+    const productsWithTotalStock = rows.map((product) => {
       const totalStock = product.Stocks.reduce((acc, stock) => acc + stock.quantity, 0);
       return {
         id: product.id,
@@ -46,10 +51,10 @@ const getAllProducts = async (req, res) => {
     return resSuccess(res, {
       products: productsWithTotalStock,
       pagination: {
-        total,
+        total: count,
         page,
         limit,
-        totalPages: Math.ceil(total / limit),
+        totalPages: Math.ceil(count / limit),
       },
     });
   } catch (err) {
@@ -101,31 +106,6 @@ const getProductDetails = async (req, res) => {
 };
 
 // ===========================
-// SEARCH PRODUCTS (TYPEAHEAD)
-// ===========================
-const searchProducts = async (req, res) => {
-  try {
-    const query = req.query.query || "";
-
-    const products = await Product.findAll({
-      where: {
-        [require("sequelize").Op.or]: [
-          { name: { [require("sequelize").Op.like]: `%${query}%` } },
-          { code: { [require("sequelize").Op.like]: `%${query}%` } },
-        ],
-      },
-      limit: 10,
-      attributes: ["id", "name", "code"],
-    });
-
-    return resSuccess(res, { results: products });
-  } catch (err) {
-    console.error(err);
-    return resError(res, "Search failed");
-  }
-};
-
-// ===========================
 // UPLOAD PRODUCTS VIA EXCEL
 // ===========================
 const uploadExcelProducts = async (req, res) => {
@@ -168,6 +148,5 @@ const uploadExcelProducts = async (req, res) => {
 module.exports = {
   getAllProducts,
   getProductDetails,
-  searchProducts,
   uploadExcelProducts,
 };
