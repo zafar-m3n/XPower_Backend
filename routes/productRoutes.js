@@ -27,10 +27,6 @@ router.get("/search", authenticate, searchProducts);
 // @desc    Get product details by ID
 router.get("/:id", authenticate, getProductDetails);
 
-// @route   POST /api/v1/products
-// @desc    Add a new product via form
-router.post("/", authenticate, addProductForm);
-
 // @route   POST /api/v1/products/upload
 // @desc    Upload products via Excel
 router.post("/upload", authenticate, upload.single("file"), uploadExcelProducts);

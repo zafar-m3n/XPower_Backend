@@ -126,41 +126,6 @@ const searchProducts = async (req, res) => {
 };
 
 // ===========================
-// ADD PRODUCT VIA FORM
-// ===========================
-const addProductForm = async (req, res) => {
-  try {
-    const { name, code, brand, description, cost, category_id } = req.body;
-
-    const existing = await Product.findOne({ where: { code } });
-    if (existing) {
-      return resError(res, "Product code already exists", 400);
-    }
-
-    const product = await Product.create({
-      name,
-      code,
-      brand,
-      description,
-      cost,
-      category_id,
-    });
-
-    return resSuccess(
-      res,
-      {
-        message: "Product created successfully",
-        product,
-      },
-      201
-    );
-  } catch (err) {
-    console.error(err);
-    return resError(res, "Failed to add product");
-  }
-};
-
-// ===========================
 // UPLOAD PRODUCTS VIA EXCEL
 // ===========================
 const uploadExcelProducts = async (req, res) => {
@@ -204,6 +169,5 @@ module.exports = {
   getAllProducts,
   getProductDetails,
   searchProducts,
-  addProductForm,
   uploadExcelProducts,
 };
