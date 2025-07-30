@@ -33,11 +33,15 @@ app.use("/uploads", express.static("uploads"));
 const authRoutes = require("./routes/authRoutes");
 const productRoutes = require("./routes/productRoutes");
 const reportRoutes = require("./routes/reportRoutes");
+const categoryRoutes = require("./routes/categoryRoutes");
+const warehouseRoutes = require("./routes/warehouseRoutes");
 
 // ✅ Use Routes
 app.use("/api/v1/auth", authRoutes);
 app.use("/api/v1/products", productRoutes);
 app.use("/api/v1/reports", reportRoutes);
+app.use("/api/v1/categories", categoryRoutes);
+app.use("/api/v1/warehouses", warehouseRoutes);
 
 // ✅ Root Route
 app.get("/", (req, res) => {
