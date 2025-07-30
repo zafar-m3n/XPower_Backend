@@ -9,6 +9,14 @@ const fs = require("fs");
 // ===========================
 const getAllProducts = async (req, res) => {
   try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const offset = (page - 1) * limit;
+
+    // 1. Get correct product count WITHOUT joins
+    const total = await Product.count();
+
+    // 2. Then fetch products with joins and pagination
     const products = await Product.findAll({
       include: [
         { model: Category, attributes: ["id", "name"] },
@@ -17,8 +25,11 @@ const getAllProducts = async (req, res) => {
           attributes: ["quantity"],
         },
       ],
+      offset,
+      limit,
     });
 
+    // 3. Map results
     const productsWithTotalStock = products.map((product) => {
       const totalStock = product.Stocks.reduce((acc, stock) => acc + stock.quantity, 0);
       return {
@@ -32,7 +43,15 @@ const getAllProducts = async (req, res) => {
       };
     });
 
-    return resSuccess(res, { products: productsWithTotalStock });
+    return resSuccess(res, {
+      products: productsWithTotalStock,
+      pagination: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+      },
+    });
   } catch (err) {
     console.error(err);
     return resError(res, "Failed to fetch products");
