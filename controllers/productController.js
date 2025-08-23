@@ -4,6 +4,7 @@ const { resSuccess, resError } = require("../utils/responseUtil");
 const xlsx = require("xlsx");
 const path = require("path");
 const fs = require("fs");
+const { sequelize } = require("../config/database");
 
 // ===========================
 // GET ALL PRODUCTS
@@ -109,61 +110,196 @@ const getProductDetails = async (req, res) => {
 // ===========================
 // UPLOAD PRODUCTS VIA EXCEL
 // ===========================
+const AUTO_CREATE_MISSING = false;
+
 const uploadExcelProducts = async (req, res) => {
+  let filePath;
+  const results = {
+    processed: 0,
+    createdProducts: 0,
+    updatedProducts: 0,
+    stockCreated: 0,
+    stockUpdated: 0,
+    skipped: 0,
+    errors: [], // per-row errors
+  };
+
   try {
     if (!req.file) {
       return resError(res, "No Excel file uploaded", 400);
     }
 
-    const filePath = path.join(__dirname, "..", req.file.path);
+    filePath = path.join(__dirname, "..", req.file.path);
     const workbook = xlsx.readFile(filePath);
     const sheet = workbook.Sheets[workbook.SheetNames[0]];
     const rows = xlsx.utils.sheet_to_json(sheet);
 
-    for (const row of rows) {
-      const { name, code, brand, description, cost, category_id, warehouse_id, quantity } = row;
-
-      // Step 1: Create/find the product
-      let product = await Product.findOne({ where: { code } });
-
-      if (!product) {
-        product = await Product.create({
-          name,
-          code,
-          brand,
-          description,
-          cost,
-          category_id,
-        });
-      }
-
-      // Step 2: If warehouse_id & quantity are given, create stock row
-      if (warehouse_id && quantity !== undefined) {
-        const existingStock = await Stock.findOne({
-          where: {
-            product_id: product.id,
-            warehouse_id: warehouse_id,
-          },
-        });
-
-        if (!existingStock) {
-          await Stock.create({
-            product_id: product.id,
-            warehouse_id,
-            quantity,
-          });
-        } else {
-          // Optional: update quantity if needed
-          existingStock.quantity += Number(quantity);
-          await existingStock.save();
-        }
-      }
+    if (!Array.isArray(rows) || rows.length === 0) {
+      return resError(res, "Excel sheet is empty", 400);
     }
 
+    // Preload Category and Warehouse name->id maps (case-insensitive)
+    const categories = await Category.findAll({ attributes: ["id", "name"] });
+    const warehouses = await Warehouse.findAll({ attributes: ["id", "name"] });
+
+    const categoryMap = new Map(categories.map((c) => [c.name.trim().toLowerCase(), c.id]));
+    const warehouseMap = new Map(warehouses.map((w) => [w.name.trim().toLowerCase(), w.id]));
+
+    // Use a single transaction for the whole import for atomicity
+    await sequelize.transaction(async (t) => {
+      for (let idx = 0; idx < rows.length; idx++) {
+        results.processed += 1;
+        const row = rows[idx];
+
+        // EXPECTED HEADERS IN EXCEL:
+        // name, code, brand, description, cost, category_name, warehouse_name, quantity
+        const { name, code, brand, description, cost, category_name, warehouse_name, quantity } = row;
+
+        // Basic validation
+        const rowErrors = [];
+        if (!name) rowErrors.push("Missing 'name'");
+        if (!code) rowErrors.push("Missing 'code'");
+        if (cost === undefined || cost === null || cost === "") rowErrors.push("Missing 'cost'");
+        if (!category_name) rowErrors.push("Missing 'category_name'");
+
+        // Warehouse & quantity are optional (product can be created without stock),
+        // but if one is present, both should be present.
+        const hasWarehouseData = warehouse_name !== undefined && warehouse_name !== null && warehouse_name !== "";
+        const hasQuantityData = quantity !== undefined && quantity !== null && quantity !== "";
+
+        if ((hasWarehouseData && !hasQuantityData) || (!hasWarehouseData && hasQuantityData)) {
+          rowErrors.push("Provide both 'warehouse_name' and 'quantity' or neither");
+        }
+
+        if (rowErrors.length) {
+          results.skipped += 1;
+          results.errors.push({ row: idx + 2, code, errors: rowErrors }); // +2 for header + 1-based row
+          continue;
+        }
+
+        // Resolve Category ID by name (case-insensitive)
+        const catKey = String(category_name).trim().toLowerCase();
+        let category_id = categoryMap.get(catKey);
+
+        if (!category_id && AUTO_CREATE_MISSING) {
+          const newCat = await Category.create({ name: String(category_name).trim() }, { transaction: t });
+          category_id = newCat.id;
+          categoryMap.set(catKey, newCat.id);
+        }
+
+        if (!category_id) {
+          results.skipped += 1;
+          results.errors.push({
+            row: idx + 2,
+            code,
+            errors: [`Category '${category_name}' not found`],
+          });
+          continue;
+        }
+
+        // Parse numeric fields
+        const parsedCost = Number(cost);
+        if (Number.isNaN(parsedCost)) {
+          results.skipped += 1;
+          results.errors.push({
+            row: idx + 2,
+            code,
+            errors: ["'cost' is not a number"],
+          });
+          continue;
+        }
+
+        // Find or create product by unique 'code'
+        let product = await Product.findOne({ where: { code }, transaction: t });
+
+        if (!product) {
+          product = await Product.create(
+            {
+              name,
+              code,
+              brand: brand ?? null,
+              description: description ?? null,
+              cost: parsedCost,
+              category_id,
+            },
+            { transaction: t }
+          );
+          results.createdProducts += 1;
+        } else {
+          // you may choose to update cost/brand/desc/category if present
+          product.name = name ?? product.name;
+          product.brand = brand ?? product.brand;
+          product.description = description ?? product.description;
+          product.cost = parsedCost ?? product.cost;
+          product.category_id = category_id;
+          await product.save({ transaction: t });
+          results.updatedProducts += 1;
+        }
+
+        // If stock columns present, resolve warehouse and upsert stock
+        if (hasWarehouseData && hasQuantityData) {
+          const whKey = String(warehouse_name).trim().toLowerCase();
+          let warehouse_id = warehouseMap.get(whKey);
+
+          if (!warehouse_id && AUTO_CREATE_MISSING) {
+            const newWh = await Warehouse.create({ name: String(warehouse_name).trim() }, { transaction: t });
+            warehouse_id = newWh.id;
+            warehouseMap.set(whKey, newWh.id);
+          }
+
+          if (!warehouse_id) {
+            results.errors.push({
+              row: idx + 2,
+              code,
+              errors: [`Warehouse '${warehouse_name}' not found`],
+            });
+            // Don’t skip the product creation—just skip stock creation
+            continue;
+          }
+
+          const qty = Number(quantity);
+          if (!Number.isFinite(qty)) {
+            results.errors.push({
+              row: idx + 2,
+              code,
+              errors: ["'quantity' is not a valid number"],
+            });
+            continue;
+          }
+
+          const existingStock = await Stock.findOne({
+            where: { product_id: product.id, warehouse_id },
+            transaction: t,
+            lock: t.LOCK.UPDATE, // defensive for concurrent imports
+          });
+
+          if (!existingStock) {
+            await Stock.create({ product_id: product.id, warehouse_id, quantity: qty }, { transaction: t });
+            results.stockCreated += 1;
+          } else {
+            // increment quantity (or replace if you prefer)
+            existingStock.quantity = Number(existingStock.quantity) + qty;
+            await existingStock.save({ transaction: t });
+            results.stockUpdated += 1;
+          }
+        }
+      }
+    });
+
+    // Clean up file
     fs.unlinkSync(filePath);
-    return resSuccess(res, { message: "Excel upload complete" });
+
+    return resSuccess(res, {
+      message: "Excel upload complete",
+      summary: results,
+    });
   } catch (err) {
     console.error(err);
+    if (filePath && fs.existsSync(filePath)) {
+      try {
+        fs.unlinkSync(filePath);
+      } catch (_) {}
+    }
     return resError(res, "Failed to upload Excel");
   }
 };
