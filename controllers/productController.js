@@ -1,5 +1,5 @@
 const { Op } = require("sequelize");
-const { Product, Category, Stock, Warehouse } = require("../models");
+const { Product, Category, Stock, Warehouse, StockTransaction } = require("../models");
 const { resSuccess, resError } = require("../utils/responseUtil");
 const xlsx = require("xlsx");
 const path = require("path");
@@ -120,7 +120,7 @@ const getProductDetails = async (req, res) => {
 // ===========================
 // UPLOAD PRODUCTS VIA EXCEL
 // ===========================
-const AUTO_CREATE_MISSING = false;
+const AUTO_CREATE_MISSING = true;
 
 const uploadExcelProducts = async (req, res) => {
   let filePath;
@@ -147,6 +147,9 @@ const uploadExcelProducts = async (req, res) => {
     if (!Array.isArray(rows) || rows.length === 0) {
       return resError(res, "Excel sheet is empty", 400);
     }
+
+    // Optional: who is performing this action (if auth middleware sets req.user)
+    const userId = req.user?.id || null;
 
     // Preload Category and Warehouse name->id maps (case-insensitive)
     const categories = await Category.findAll({ attributes: ["id", "name"] });
@@ -331,7 +334,24 @@ const uploadExcelProducts = async (req, res) => {
             // increment quantity (or replace if you prefer)
             existingStock.quantity = Number(existingStock.quantity) + qty;
             await existingStock.save({ transaction: t });
+            results.stockUpdated += 1;
           }
+
+          // === NEW: Record stock IN transaction for this row ===
+          await StockTransaction.create(
+            {
+              product_id: product.id,
+              warehouse_id,
+              type: "IN",
+              quantity: qty,
+              transaction_date: parsedGrnDate || new Date(),
+              source: "EXCEL",
+              reference_no: null, // could be extended to use a GRN ref column later
+              remarks: remarks ?? null,
+              created_by: userId,
+            },
+            { transaction: t }
+          );
         }
       }
     });
