@@ -36,6 +36,7 @@ const reportRoutes = require("./routes/reportRoutes");
 const categoryRoutes = require("./routes/categoryRoutes");
 const warehouseRoutes = require("./routes/warehouseRoutes");
 const userRoutes = require("./routes/userRoutes");
+const stockRoutes = require("./routes/stockRoutes");
 
 // ✅ Use Routes
 app.use("/api/v1/auth", authRoutes);
@@ -44,6 +45,7 @@ app.use("/api/v1/reports", reportRoutes);
 app.use("/api/v1/categories", categoryRoutes);
 app.use("/api/v1/warehouses", warehouseRoutes);
 app.use("/api/v1/users", userRoutes);
+app.use("/api/v1/stock", stockRoutes); 
 
 // ✅ Root Route
 app.get("/", (req, res) => {
