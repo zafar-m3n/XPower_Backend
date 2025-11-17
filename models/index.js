@@ -3,6 +3,7 @@ const Category = require("./Category");
 const Warehouse = require("./Warehouse");
 const Product = require("./Product");
 const Stock = require("./Stock");
+const StockTransaction = require("./StockTransaction");
 
 // === Associations ===
 
@@ -33,6 +34,33 @@ Stock.belongsTo(Warehouse, {
   foreignKey: "warehouse_id",
 });
 
+// Product → StockTransaction
+Product.hasMany(StockTransaction, {
+  foreignKey: "product_id",
+  onDelete: "CASCADE",
+});
+StockTransaction.belongsTo(Product, {
+  foreignKey: "product_id",
+});
+
+// Warehouse → StockTransaction
+Warehouse.hasMany(StockTransaction, {
+  foreignKey: "warehouse_id",
+  onDelete: "CASCADE",
+});
+StockTransaction.belongsTo(Warehouse, {
+  foreignKey: "warehouse_id",
+});
+
+// User → StockTransaction (who created the transaction)
+User.hasMany(StockTransaction, {
+  foreignKey: "created_by",
+  onDelete: "SET NULL",
+});
+StockTransaction.belongsTo(User, {
+  foreignKey: "created_by",
+});
+
 // === Export all models ===
 module.exports = {
   User,
@@ -40,4 +68,5 @@ module.exports = {
   Warehouse,
   Product,
   Stock,
+  StockTransaction,
 };
