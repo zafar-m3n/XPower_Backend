@@ -47,7 +47,12 @@ const lowStockReport = async (req, res) => {
     const threshold = 10;
     const lowStockEntries = await Stock.findAll({
       where: { quantity: { [Op.lt]: threshold } },
-      include: [{ model: Product, attributes: ["id", "name", "code", "brand", "cost"] }],
+      include: [
+        {
+          model: Product,
+          attributes: ["id", "name", "code", "brand", "cost", "grn_date", "image_url", "remarks"],
+        },
+      ],
     });
 
     const grouped = {};
@@ -70,6 +75,11 @@ const lowStockReport = async (req, res) => {
       brand: entry.product.brand,
       cost: entry.product.cost,
       total_quantity: entry.total_quantity,
+
+      // New fields in low stock report
+      grn_date: entry.product.grn_date,
+      image_url: entry.product.image_url,
+      remarks: entry.product.remarks,
     }));
 
     return resSuccess(res, { low_stock: lowStockProducts });
@@ -128,6 +138,11 @@ const outOfStockReport = async (req, res) => {
               code: product.code,
               brand: product.brand,
               cost: product.cost,
+
+              // New fields in out of stock report
+              grn_date: product.grn_date,
+              image_url: product.image_url,
+              remarks: product.remarks,
             }
           : null;
       })
@@ -157,6 +172,8 @@ const generateReportPDF = async (req, res) => {
         { key: "brand", label: "Brand" },
         { key: "cost", label: "Cost" },
         { key: "total_quantity", label: "Qty" },
+        { key: "grn_date", label: "GRN Date" },
+        { key: "remarks", label: "Remarks" },
       ],
     },
     "out-of-stock": {
@@ -168,6 +185,8 @@ const generateReportPDF = async (req, res) => {
         { key: "code", label: "Code" },
         { key: "brand", label: "Brand" },
         { key: "cost", label: "Cost" },
+        { key: "grn_date", label: "GRN Date" },
+        { key: "remarks", label: "Remarks" },
       ],
     },
     "stock-by-warehouse": {

@@ -11,6 +11,9 @@ const Product = sequelize.define(
     brand: { type: DataTypes.STRING(100), allowNull: true },
     cost: { type: DataTypes.DECIMAL(10, 2), allowNull: false },
     category_id: { type: DataTypes.INTEGER, allowNull: true },
+    grn_date: { type: DataTypes.DATE, allowNull: true },
+    image_url: { type: DataTypes.STRING(255), allowNull: true },
+    remarks: { type: DataTypes.TEXT, allowNull: true },
   },
   {
     tableName: "products",

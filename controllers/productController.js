@@ -47,6 +47,11 @@ const getAllProducts = async (req, res) => {
         cost: product.cost,
         category: product.Category,
         total_stock: totalStock,
+
+        // New fields exposed in list API
+        grn_date: product.grn_date,
+        image_url: product.image_url,
+        remarks: product.remarks,
       };
     });
 
@@ -99,6 +104,11 @@ const getProductDetails = async (req, res) => {
         description: product.description,
         category: product.Category,
         stock_by_warehouse: stockByWarehouse,
+
+        // New fields exposed in detail API
+        grn_date: product.grn_date,
+        image_url: product.image_url,
+        remarks: product.remarks,
       },
     });
   } catch (err) {
@@ -152,11 +162,26 @@ const uploadExcelProducts = async (req, res) => {
         const row = rows[idx];
 
         // EXPECTED HEADERS IN EXCEL:
-        // name, code, brand, description, cost, category_name, warehouse_name, quantity
-        const { name, code, brand, description, cost, category_name, warehouse_name, quantity } = row;
+        // name, code, brand, description, cost, category_name,
+        // warehouse_name, quantity,
+        // grn_date (optional), image_url (optional), remarks (optional)
+        const {
+          name,
+          code,
+          brand,
+          description,
+          cost,
+          category_name,
+          warehouse_name,
+          quantity,
+          grn_date,
+          image_url,
+          remarks,
+        } = row;
+
+        const rowErrors = [];
 
         // Basic validation
-        const rowErrors = [];
         if (!name) rowErrors.push("Missing 'name'");
         if (!code) rowErrors.push("Missing 'code'");
         if (cost === undefined || cost === null || cost === "") rowErrors.push("Missing 'cost'");
@@ -169,6 +194,17 @@ const uploadExcelProducts = async (req, res) => {
 
         if ((hasWarehouseData && !hasQuantityData) || (!hasWarehouseData && hasQuantityData)) {
           rowErrors.push("Provide both 'warehouse_name' and 'quantity' or neither");
+        }
+
+        // Optional: validate GRN date format if provided
+        let parsedGrnDate = null;
+        if (grn_date !== undefined && grn_date !== null && grn_date !== "") {
+          const d = grn_date instanceof Date ? grn_date : new Date(grn_date);
+          if (Number.isNaN(d.getTime())) {
+            rowErrors.push("Invalid 'grn_date' format");
+          } else {
+            parsedGrnDate = d;
+          }
         }
 
         if (rowErrors.length) {
@@ -213,6 +249,7 @@ const uploadExcelProducts = async (req, res) => {
         let product = await Product.findOne({ where: { code }, transaction: t });
 
         if (!product) {
+          // Create new product with new fields
           product = await Product.create(
             {
               name,
@@ -221,17 +258,31 @@ const uploadExcelProducts = async (req, res) => {
               description: description ?? null,
               cost: parsedCost,
               category_id,
+              grn_date: parsedGrnDate,
+              image_url: image_url ?? null,
+              remarks: remarks ?? null,
             },
             { transaction: t }
           );
           results.createdProducts += 1;
         } else {
-          // you may choose to update cost/brand/desc/category if present
+          // Update existing product (including new fields if provided)
           product.name = name ?? product.name;
           product.brand = brand ?? product.brand;
           product.description = description ?? product.description;
           product.cost = parsedCost ?? product.cost;
           product.category_id = category_id;
+
+          if (parsedGrnDate) {
+            product.grn_date = parsedGrnDate;
+          }
+          if (image_url !== undefined) {
+            product.image_url = image_url ?? product.image_url;
+          }
+          if (remarks !== undefined) {
+            product.remarks = remarks ?? product.remarks;
+          }
+
           await product.save({ transaction: t });
           results.updatedProducts += 1;
         }
@@ -280,7 +331,6 @@ const uploadExcelProducts = async (req, res) => {
             // increment quantity (or replace if you prefer)
             existingStock.quantity = Number(existingStock.quantity) + qty;
             await existingStock.save({ transaction: t });
-            results.stockUpdated += 1;
           }
         }
       }
