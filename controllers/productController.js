@@ -7,6 +7,57 @@ const fs = require("fs");
 const { sequelize } = require("../config/database");
 
 // ===========================
+// Helpers
+// ===========================
+
+// Check if a row from Excel is completely empty (all cells blank/undefined/null)
+const isRowCompletelyEmpty = (row) => {
+  if (!row || typeof row !== "object") return true;
+
+  const values = Object.values(row);
+  if (values.length === 0) return true;
+
+  return values.every((val) => {
+    if (val === null || val === undefined) return true;
+    if (typeof val === "string" && val.trim() === "") return true;
+    return false;
+  });
+};
+
+// Parse GRN date from dd/mm/yyyy (or let valid Date instances pass through)
+const parseGrnDateFromExcel = (value) => {
+  if (value === null || value === undefined || value === "") return null;
+
+  // Already a Date object
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+
+    // Expect dd/mm/yyyy
+    const match = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(trimmed);
+    if (match) {
+      const day = parseInt(match[1], 10);
+      const month = parseInt(match[2], 10) - 1; // 0-based
+      const year = parseInt(match[3], 10);
+      const d = new Date(year, month, day);
+      if (!Number.isNaN(d.getTime())) return d;
+      return null;
+    }
+
+    // Fallback: try native Date parsing if format is different
+    const d = new Date(trimmed);
+    if (!Number.isNaN(d.getTime())) return d;
+  }
+
+  // If it gets here, we consider it invalid
+  return null;
+};
+
+// ===========================
 // GET ALL PRODUCTS
 // ===========================
 
@@ -158,17 +209,26 @@ const uploadExcelProducts = async (req, res) => {
     const categoryMap = new Map(categories.map((c) => [c.name.trim().toLowerCase(), c.id]));
     const warehouseMap = new Map(warehouses.map((w) => [w.name.trim().toLowerCase(), w.id]));
 
+    // For filling down missing product names (variants)
+    let lastNonEmptyName = null;
+
     // Use a single transaction for the whole import for atomicity
     await sequelize.transaction(async (t) => {
       for (let idx = 0; idx < rows.length; idx++) {
-        results.processed += 1;
         const row = rows[idx];
+
+        // Skip completely empty rows (no counting, no errors)
+        if (isRowCompletelyEmpty(row)) {
+          continue;
+        }
+
+        results.processed += 1;
 
         // EXPECTED HEADERS IN EXCEL:
         // name, code, brand, description, cost, category_name,
         // warehouse_name, quantity,
         // grn_date (optional), image_url (optional), remarks (optional)
-        const {
+        let {
           name,
           code,
           brand,
@@ -181,6 +241,19 @@ const uploadExcelProducts = async (req, res) => {
           image_url,
           remarks,
         } = row;
+
+        // Normalise and trim basic string fields
+        name = typeof name === "string" ? name.trim() : name;
+        code = typeof code === "string" ? code.trim() : code;
+        category_name = typeof category_name === "string" ? category_name.trim() : category_name;
+        warehouse_name = typeof warehouse_name === "string" ? warehouse_name.trim() : warehouse_name;
+
+        // === NEW: carry down last non-empty name for variants ===
+        if (name && name !== "") {
+          lastNonEmptyName = name;
+        } else if (!name && lastNonEmptyName && code) {
+          name = lastNonEmptyName;
+        }
 
         const rowErrors = [];
 
@@ -199,20 +272,22 @@ const uploadExcelProducts = async (req, res) => {
           rowErrors.push("Provide both 'warehouse_name' and 'quantity' or neither");
         }
 
-        // Optional: validate GRN date format if provided
+        // Optional: validate GRN date format if provided (dd/mm/yyyy)
         let parsedGrnDate = null;
         if (grn_date !== undefined && grn_date !== null && grn_date !== "") {
-          const d = grn_date instanceof Date ? grn_date : new Date(grn_date);
-          if (Number.isNaN(d.getTime())) {
-            rowErrors.push("Invalid 'grn_date' format");
-          } else {
-            parsedGrnDate = d;
+          parsedGrnDate = parseGrnDateFromExcel(grn_date);
+          if (!parsedGrnDate) {
+            rowErrors.push("Invalid 'grn_date' format (expected dd/mm/yyyy)");
           }
         }
 
         if (rowErrors.length) {
           results.skipped += 1;
-          results.errors.push({ row: idx + 2, code, errors: rowErrors }); // +2 for header + 1-based row
+          results.errors.push({
+            row: idx + 2, // +2 for header + 1-based row
+            code,
+            errors: rowErrors,
+          });
           continue;
         }
 
@@ -249,7 +324,10 @@ const uploadExcelProducts = async (req, res) => {
         }
 
         // Find or create product by unique 'code'
-        let product = await Product.findOne({ where: { code }, transaction: t });
+        let product = await Product.findOne({
+          where: { code },
+          transaction: t,
+        });
 
         if (!product) {
           // Create new product with new fields
@@ -337,7 +415,7 @@ const uploadExcelProducts = async (req, res) => {
             results.stockUpdated += 1;
           }
 
-          // === NEW: Record stock IN transaction for this row ===
+          // Record stock IN transaction for this row
           await StockTransaction.create(
             {
               product_id: product.id,
@@ -346,7 +424,7 @@ const uploadExcelProducts = async (req, res) => {
               quantity: qty,
               transaction_date: parsedGrnDate || new Date(),
               source: "EXCEL",
-              reference_no: null, // could be extended to use a GRN ref column later
+              reference_no: null, // could be extended later
               remarks: remarks ?? null,
               created_by: userId,
             },
