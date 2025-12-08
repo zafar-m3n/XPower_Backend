@@ -11,27 +11,47 @@ const puppeteer = require("puppeteer");
 // ===========================
 const dashboardStats = async (req, res) => {
   try {
+    // Total number of products
     const totalProducts = await Product.count();
+
+    // Total stock quantity across all warehouses
     const totalStockResult = await Stock.findAll({
       attributes: [[fn("SUM", col("quantity")), "total"]],
       raw: true,
     });
-    const totalStock = parseInt(totalStockResult[0].total || 0);
+    const totalStock = parseInt(totalStockResult[0].total || 0, 10);
 
+    // Count of products that have any stock entry with quantity < 10
     const lowStockCountResult = await Stock.findAll({
       where: { quantity: { [Op.lt]: 10 } },
       attributes: ["product_id"],
       group: ["product_id"],
     });
-
     const lowStockCount = lowStockCountResult.length;
+
+    // Number of categories
     const categoryCount = await Category.count();
+
+    // ===== NEW: Total value of items (sum of cost * quantity) =====
+    const totalValueResult = await Stock.findAll({
+      attributes: [[fn("SUM", literal("quantity * Product.cost")), "total_value"]],
+      include: [
+        {
+          model: Product,
+          attributes: [], // we only need cost for the calculation
+        },
+      ],
+      raw: true,
+    });
+
+    const totalValue = parseFloat(totalValueResult[0].total_value || 0);
 
     return resSuccess(res, {
       total_products: totalProducts,
       total_stock: totalStock,
       low_stock_count: lowStockCount,
       category_count: categoryCount,
+      total_value: totalValue, // 👈 expose to frontend
     });
   } catch (err) {
     console.error(err);
@@ -109,7 +129,7 @@ const stockByWarehouseReport = async (req, res) => {
       warehouse_id: entry.warehouse_id,
       warehouse_name: entry.Warehouse.name,
       location: entry.Warehouse.location,
-      total_quantity: parseInt(entry.get("total_quantity")),
+      total_quantity: parseInt(entry.get("total_quantity"), 10),
     }));
 
     return resSuccess(res, { stock_by_warehouse: summary });
