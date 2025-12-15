@@ -93,6 +93,7 @@ const getAllProducts = async (req, res) => {
       return {
         id: product.id,
         name: product.name,
+        description: product.description,
         code: product.code,
         brand: product.brand,
         cost: product.cost,
